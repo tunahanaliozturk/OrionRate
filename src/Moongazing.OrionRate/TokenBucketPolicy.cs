@@ -48,6 +48,15 @@ public sealed class TokenBucketPolicy : RateLimitPolicy
         {
             throw new ArgumentOutOfRangeException(nameof(permits), permits, "permits must be positive.");
         }
+        if (permits > capacity)
+        {
+            // A cost above capacity can never be admitted, however long the caller waits. Throttling
+            // it would hand back a RetryAfter that is a lie the caller can retry against forever.
+            throw new ArgumentOutOfRangeException(
+                nameof(permits),
+                permits,
+                $"permits exceeds the bucket capacity ({capacity}); the request could never be admitted.");
+        }
 
         if (state is not TokenBucketState s)
         {

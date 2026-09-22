@@ -92,6 +92,22 @@ public sealed class TokenBucketTests
     }
 
     [Fact]
+    public async Task A_cost_above_the_bucket_capacity_is_rejected_not_promised_an_impossible_retry()
+    {
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("api", p => p.TokenBucket(permit: 5, per: TimeSpan.FromSeconds(1))));
+
+        // 50 permits never fit in a 5-token bucket. Throttling would advertise a RetryAfter the
+        // caller can wait out forever and still be rejected.
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => limiter.AcquireAsync("api", "k", permits: 50).AsTask());
+
+        // Burst counts toward capacity, so a cost the bucket can actually hold still goes through.
+        var withBurst = Limiter(clock, o => o.AddPolicy("api", p => p.TokenBucket(permit: 5, per: TimeSpan.FromSeconds(1), burst: 5)));
+        Assert.True((await withBurst.AcquireAsync("api", "k", permits: 10)).Allowed);
+    }
+
+    [Fact]
     public async Task An_unknown_policy_throws()
     {
         var clock = new FakeOrionClock();

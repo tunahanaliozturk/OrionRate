@@ -43,6 +43,16 @@ public sealed class SlidingWindowPolicy : RateLimitPolicy
         {
             throw new ArgumentOutOfRangeException(nameof(permits), permits, "permits must be positive.");
         }
+        if (permits > permit)
+        {
+            // A cost above the window limit can never be admitted, however long the caller waits.
+            // Throttling it would hand back a RetryAfter that is a lie the caller can retry against
+            // forever.
+            throw new ArgumentOutOfRangeException(
+                nameof(permits),
+                permits,
+                $"permits exceeds the window limit ({permit}); the request could never be admitted.");
+        }
 
         if (state is not SlidingWindowState s)
         {

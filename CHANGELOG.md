@@ -6,6 +6,18 @@ All notable changes to OrionRate are documented in this file. The format is base
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A cost above the policy's capacity is rejected instead of promised an impossible retry**
+  (**breaking**) — `AcquireAsync("api", key, permits: 50)` against a 5-token bucket (or a 5-slot
+  window) used to return a throttle carrying a finite `RetryAfter`; waiting it out and retrying was
+  rejected again, forever, because the bucket caps at capacity. Both policies now throw
+  `ArgumentOutOfRangeException` when `permits` exceeds capacity (`permit + burst` for the token
+  bucket, `permit` for the sliding window), matching `System.Threading.RateLimiting`. A rejection is
+  still data — this is a caller bug, not a limit being hit.
+
 ## [0.5.0] - 2026-07-29
 
 The first release — the Orion family's Wave 1 rate-limiting foundation: token-bucket and

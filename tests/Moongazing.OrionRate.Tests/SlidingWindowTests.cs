@@ -63,4 +63,18 @@ public sealed class SlidingWindowTests
         // The t=0 request ages out at t=10, so ~6s from now.
         Assert.Equal(6, throttled.RetryAfter.TotalSeconds, precision: 1);
     }
+
+    [Fact]
+    public async Task A_cost_above_the_window_limit_is_rejected_not_promised_an_impossible_retry()
+    {
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("login", p => p.SlidingWindow(permit: 5, window: TimeSpan.FromSeconds(10))));
+
+        // A 50-permit cost never fits a 5-slot window, so a throttle would advertise a RetryAfter
+        // that is never true.
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => limiter.AcquireAsync("login", "k", permits: 50).AsTask());
+
+        Assert.True((await limiter.AcquireAsync("login", "k", permits: 5)).Allowed);
+    }
 }
