@@ -148,6 +148,30 @@ public sealed class RateLimiterInfraTests
     }
 
     [Fact]
+    public async Task A_sweep_running_under_a_concurrent_race_still_admits_exactly_the_bucket()
+    {
+        // The sweep walks partitions while acquisitions are in flight. With the clock frozen for the
+        // duration of the race nothing refills, so the hot key must admit exactly its capacity no
+        // matter how the sweep interleaves - a sweep that dropped a partition still in use would
+        // hand the next caller a fresh full bucket and push the count past 50.
+        var clock = new FakeOrionClock();
+        var options = new RateLimiterOptions();
+        options.AddPolicy("api", p => p.TokenBucket(permit: 50, per: TimeSpan.FromHours(1)));
+        var limiter = new RateLimiter(options.Build(), clock, new RateDiagnostics());
+
+        for (var i = 0; i < 1000; i++)
+        {
+            await limiter.AcquireAsync("api", $"cold:{i}");
+        }
+        clock.Advance(TimeSpan.FromHours(2)); // every cold partition is now full, and a sweep is due
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 500)
+            .Select(_ => Task.Run(async () => (await limiter.AcquireAsync("api", "hot")).Allowed)));
+
+        Assert.Equal(50, results.Count(allowed => allowed));
+    }
+
+    [Fact]
     public void Key_helper_builds_and_composes_consistent_keys()
     {
         Assert.Equal("tenant:acme", Key.Tenant.Of("acme"));
