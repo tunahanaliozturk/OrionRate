@@ -172,6 +172,23 @@ public sealed class RateLimiterInfraTests
     }
 
     [Fact]
+    public async Task Policies_do_not_share_state_through_a_composite_key_collision()
+    {
+        // ("a b", "c") and ("a", "b c") must not land on the same partition. Any separator that can
+        // occur in a policy name or a key - a space, a colon, a pipe - lets one policy spend another
+        // policy's budget.
+        var clock = new FakeOrionClock();
+        var options = new RateLimiterOptions();
+        options.AddPolicy("a b", p => p.TokenBucket(1, TimeSpan.FromHours(1)));
+        options.AddPolicy("a", p => p.TokenBucket(1, TimeSpan.FromHours(1)));
+        var limiter = new RateLimiter(options.Build(), clock, new RateDiagnostics());
+
+        Assert.True((await limiter.AcquireAsync("a b", "c")).Allowed);
+        Assert.True((await limiter.AcquireAsync("a", "b c")).Allowed, "a second policy was charged against the first one's bucket");
+        Assert.Equal(2, limiter.PartitionCount);
+    }
+
+    [Fact]
     public void Key_helper_builds_and_composes_consistent_keys()
     {
         Assert.Equal("tenant:acme", Key.Tenant.Of("acme"));
