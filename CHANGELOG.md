@@ -42,6 +42,13 @@ All notable changes to OrionRate are documented in this file. The format is base
   — are now swept off the acquire path, at most once a minute and only once the map is worth walking.
   `RateLimitPolicy.IsIdle` is the opt-in; it defaults to `false`, so a custom policy keeps the old
   behaviour until it overrides it.
+- **`Key` rejects values that forge another identity's key** (**breaking**) — `Key.Of` joins a
+  dimension to its value with `:` and `Key.Combine` joins segments with `|`, but neither character was
+  rejected in the text a caller supplies. `Key.Tenant.Of("acme|route:/v1/charges")` produced a string
+  byte-for-byte identical to `Key.Combine(Key.Tenant.Of("acme"), Key.Route.Of("/v1/charges"))`, so a
+  caller-supplied tenant id or route could choose which partition it landed on and spend another
+  identity's budget. `Custom` now rejects `:` and `|` in a dimension name, and `Of` / `Combine` reject
+  `|` in a value or segment.
 
 ## [0.5.0] - 2026-07-29
 

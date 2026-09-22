@@ -189,6 +189,23 @@ public sealed class RateLimiterInfraTests
     }
 
     [Fact]
+    public void Key_segments_cannot_be_forged_into_another_identity()
+    {
+        // Key.Of joins a dimension to its value with ':' and Key.Combine joins segments with '|'.
+        // Unchecked, Key.Tenant.Of("acme|route:/v1/charges") is byte-for-byte the composite key for
+        // tenant acme on that route, so a caller-supplied tenant id chooses its own partition and can
+        // spend another identity's budget.
+        Assert.Throws<ArgumentException>(() => Key.Tenant.Of("acme|route:/v1/charges"));
+        Assert.Throws<ArgumentException>(() => Key.Custom("a:b"));
+        Assert.Throws<ArgumentException>(() => Key.Combine("tenant:a|route:/x", "route:/y"));
+
+        // Well-formed keys are untouched.
+        Assert.Equal(
+            "tenant:acme|route:/v1/charges",
+            Key.Combine(Key.Tenant.Of("acme"), Key.Route.Of("/v1/charges")));
+    }
+
+    [Fact]
     public void Key_helper_builds_and_composes_consistent_keys()
     {
         Assert.Equal("tenant:acme", Key.Tenant.Of("acme"));
