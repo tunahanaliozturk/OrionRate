@@ -100,6 +100,22 @@ public sealed class TokenBucketPolicy : RateLimitPolicy
         return ticks >= long.MaxValue ? TimeSpan.MaxValue : TimeSpan.FromTicks((long)ticks);
     }
 
+    /// <inheritdoc />
+    public override bool IsIdle(object? state, IOrionClock clock)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+        if (state is not TokenBucketState s)
+        {
+            return true;
+        }
+
+        var elapsed = clock.GetElapsedTime(s.LastTimestamp);
+        // A bucket back at capacity behaves exactly like one that was never created.
+        return elapsed > TimeSpan.Zero
+            ? s.Tokens + (elapsed.TotalSeconds * refillPerSecond) >= capacity
+            : s.Tokens >= capacity;
+    }
+
     private sealed class TokenBucketState
     {
         public double Tokens { get; set; }

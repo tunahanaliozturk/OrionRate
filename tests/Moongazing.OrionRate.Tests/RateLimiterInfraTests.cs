@@ -103,6 +103,51 @@ public sealed class RateLimiterInfraTests
     }
 
     [Fact]
+    public async Task Idle_partitions_are_evicted_so_the_key_space_cannot_grow_without_bound()
+    {
+        // Keys come from API keys and client IPs, so the key space belongs to the caller. A partition
+        // whose bucket has refilled to full is indistinguishable from one that was never created, so
+        // holding it is pure leak.
+        var clock = new FakeOrionClock();
+        var options = new RateLimiterOptions();
+        options.AddPolicy("api", p => p.TokenBucket(permit: 10, per: TimeSpan.FromSeconds(1)));
+        var limiter = new RateLimiter(options.Build(), clock, new RateDiagnostics());
+
+        for (var i = 0; i < 5000; i++)
+        {
+            await limiter.AcquireAsync("api", $"ip:10.0.{i / 256}.{i % 256}");
+        }
+        Assert.True(limiter.PartitionCount > 4000, "the one-shot keys should still be held while they are in use");
+
+        clock.Advance(TimeSpan.FromHours(1)); // every one of those buckets is long since full
+        await limiter.AcquireAsync("api", "ip:live");
+
+        Assert.True(limiter.PartitionCount < 100, $"{limiter.PartitionCount} partitions still held an hour after a 1-second bucket last saw traffic");
+    }
+
+    [Fact]
+    public async Task Eviction_does_not_forget_a_partition_that_is_still_spending()
+    {
+        var clock = new FakeOrionClock();
+        var options = new RateLimiterOptions();
+        options.AddPolicy("api", p => p.TokenBucket(permit: 10, per: TimeSpan.FromHours(24)));
+        var limiter = new RateLimiter(options.Build(), clock, new RateDiagnostics());
+
+        for (var i = 0; i < 5000; i++)
+        {
+            await limiter.AcquireAsync("api", $"ip:10.0.{i / 256}.{i % 256}");
+        }
+        for (var i = 0; i < 10; i++)
+        {
+            Assert.True((await limiter.AcquireAsync("api", "ip:hot")).Allowed);
+        }
+
+        // A sweep runs, but 90 minutes of a 24-hour period is 0.6 of a token: nothing is back to full.
+        clock.Advance(TimeSpan.FromMinutes(90));
+        Assert.False((await limiter.AcquireAsync("api", "ip:hot")).Allowed, "an in-use partition was evicted and handed back a fresh bucket");
+    }
+
+    [Fact]
     public void Key_helper_builds_and_composes_consistent_keys()
     {
         Assert.Equal("tenant:acme", Key.Tenant.Of("acme"));

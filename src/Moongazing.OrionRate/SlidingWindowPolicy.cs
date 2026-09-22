@@ -60,11 +60,7 @@ public sealed class SlidingWindowPolicy : RateLimitPolicy
             state = s;
         }
 
-        // Drop timestamps that have aged out of the trailing window (they no longer count).
-        while (s.Timestamps.Count > 0 && clock.GetElapsedTime(s.Timestamps.Peek()) >= window)
-        {
-            s.Timestamps.Dequeue();
-        }
+        DropAgedOut(s, clock);
 
         var count = s.Timestamps.Count;
         if (count + permits <= permit)
@@ -84,6 +80,29 @@ public sealed class SlidingWindowPolicy : RateLimitPolicy
         var needed = (int)(count + (long)permits - permit);
         var retryAfter = window - clock.GetElapsedTime(NthOldest(s.Timestamps, needed));
         return RateResult.Throttle(permit, permit - count, retryAfter);
+    }
+
+    /// <inheritdoc />
+    public override bool IsIdle(object? state, IOrionClock clock)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+        if (state is not SlidingWindowState s)
+        {
+            return true;
+        }
+
+        // An empty log behaves exactly like a key that was never seen.
+        DropAgedOut(s, clock);
+        return s.Timestamps.Count == 0;
+    }
+
+    // Drop timestamps that have aged out of the trailing window (they no longer count).
+    private void DropAgedOut(SlidingWindowState s, IOrionClock clock)
+    {
+        while (s.Timestamps.Count > 0 && clock.GetElapsedTime(s.Timestamps.Peek()) >= window)
+        {
+            s.Timestamps.Dequeue();
+        }
     }
 
     private static long NthOldest(Queue<long> timestamps, int n)

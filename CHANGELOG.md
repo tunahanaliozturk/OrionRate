@@ -35,6 +35,13 @@ All notable changes to OrionRate are documented in this file. The format is base
   in-window request ages out, which frees exactly one slot. A caller asking for more than one permit
   was sent back too early and rejected again (a 3-permit request on a full 5-slot window was told to
   wait 5s when it needed 7s). It now reports when the last slot the request actually needs comes free.
+- **Idle partitions are evicted** — the limiter kept one entry per `(policy, key)` for the lifetime
+  of the process. Keys are API keys, tenants and client IPs, so the key space belongs to the caller:
+  a rotating key was an unbounded memory leak an attacker could drive. Partitions whose state has
+  decayed back to a brand-new key's — a bucket refilled to capacity, a window with nothing left in it
+  — are now swept off the acquire path, at most once a minute and only once the map is worth walking.
+  `RateLimitPolicy.IsIdle` is the opt-in; it defaults to `false`, so a custom policy keeps the old
+  behaviour until it overrides it.
 
 ## [0.5.0] - 2026-07-29
 
