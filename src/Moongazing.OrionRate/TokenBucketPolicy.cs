@@ -64,19 +64,24 @@ public sealed class TokenBucketPolicy : RateLimitPolicy
             s = new TokenBucketState { Tokens = capacity, LastTimestamp = clock.GetTimestamp() };
             state = s;
         }
-        else
+
+        // The token count is a pure function of the anchor - the tokens held at LastTimestamp - and
+        // the time elapsed since it, so recompute it from the anchor instead of crediting the bucket
+        // on every call. Re-anchoring on a call that consumed nothing rounded the credit away (a rate
+        // below one permit per poll then accrued nothing at all, forever), and re-anchoring onto a
+        // clock that had stepped backwards turned the correction back to real time into a full refill.
+        var elapsed = clock.GetElapsedTime(s.LastTimestamp);
+        var available = elapsed > TimeSpan.Zero
+            ? Math.Min(capacity, s.Tokens + (elapsed.TotalSeconds * refillPerSecond))
+            : s.Tokens;
+
+        if (available >= permits)
         {
-            var elapsed = clock.GetElapsedTime(s.LastTimestamp);
-            s.LastTimestamp = clock.GetTimestamp();
+            s.Tokens = available - permits;
             if (elapsed > TimeSpan.Zero)
             {
-                s.Tokens = Math.Min(capacity, s.Tokens + (elapsed.TotalSeconds * refillPerSecond));
+                s.LastTimestamp = clock.GetTimestamp(); // the anchor only ever moves forward
             }
-        }
-
-        if (s.Tokens >= permits)
-        {
-            s.Tokens -= permits;
             return RateResult.Allow(PermitLimit, (long)s.Tokens);
         }
 
@@ -84,8 +89,8 @@ public sealed class TokenBucketPolicy : RateLimitPolicy
         // tick. Rounding down (what TimeSpan.FromSeconds does) lands the caller a tick before the
         // token exists, so honouring the advertised RetryAfter earns a second rejection - and once the
         // shortfall is under half a tick the advertised wait truncates to zero, which is a busy-spin.
-        var deficit = permits - s.Tokens;
-        return RateResult.Throttle(PermitLimit, (long)s.Tokens, CeilingSeconds(deficit / refillPerSecond));
+        var deficit = permits - available;
+        return RateResult.Throttle(PermitLimit, (long)available, CeilingSeconds(deficit / refillPerSecond));
     }
 
     // TimeSpan.FromSeconds truncates toward zero; a retry-after must never land early.

@@ -23,6 +23,14 @@ All notable changes to OrionRate are documented in this file. The format is base
   shortfall fell under half a tick the advertised wait truncated to `TimeSpan.Zero`, turning a
   throttle into a busy-spin. The shortfall is now rounded up to the next tick, and an over-long wait
   saturates at `TimeSpan.MaxValue` instead of overflowing.
+- **Token-bucket refill is computed from a stable anchor** — the bucket re-stamped its refill
+  timestamp on every call, including calls that credited or consumed nothing. Two consequences:
+  a rate slower than one permit per poll (e.g. 1 per 10s, polled once a second) accumulated its
+  sub-permit credits through repeated floating-point addition and never reached a whole token, so the
+  bucket refilled *nothing*; and a clock stepped backwards (NTP) re-anchored onto the rewound instant,
+  so the correction back to real time read as a full period of refill and handed out a whole bucket.
+  Tokens are now derived from `(tokens at anchor, anchor, now)` in one step, and the anchor only ever
+  moves forward.
 
 ## [0.5.0] - 2026-07-29
 
