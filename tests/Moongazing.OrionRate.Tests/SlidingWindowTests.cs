@@ -99,4 +99,19 @@ public sealed class SlidingWindowTests
         var retry = await limiter.AcquireAsync("login", "k", permits: 3);
         Assert.True(retry.Allowed, $"waited the advertised {throttled.RetryAfter} and was rejected again (next {retry.RetryAfter})");
     }
+
+    [Fact]
+    public async Task A_request_ages_out_at_exactly_the_window_length_and_not_a_tick_sooner()
+    {
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("login", p => p.SlidingWindow(permit: 1, window: TimeSpan.FromSeconds(10))));
+
+        Assert.True((await limiter.AcquireAsync("login", "k")).Allowed); // t=0
+
+        clock.Advance(TimeSpan.FromSeconds(10) - TimeSpan.FromTicks(1));
+        Assert.False((await limiter.AcquireAsync("login", "k")).Allowed, "one tick short of the window still counts");
+
+        clock.Advance(TimeSpan.FromTicks(1));
+        Assert.True((await limiter.AcquireAsync("login", "k")).Allowed, "at exactly the window length the request has aged out");
+    }
 }

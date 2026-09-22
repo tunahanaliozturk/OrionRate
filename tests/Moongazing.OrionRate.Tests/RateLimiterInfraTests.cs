@@ -189,6 +189,26 @@ public sealed class RateLimiterInfraTests
     }
 
     [Fact]
+    public async Task Degenerate_costs_and_capacities_are_rejected_at_the_boundary()
+    {
+        var clock = new FakeOrionClock();
+        var options = new RateLimiterOptions();
+        options.AddPolicy("api", p => p.TokenBucket(1, TimeSpan.FromSeconds(1)));
+        var limiter = new RateLimiter(options.Build(), clock, new RateDiagnostics());
+
+        // A free or negative-cost request would silently bypass the limit.
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => limiter.AcquireAsync("api", "k", permits: 0).AsTask());
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => limiter.AcquireAsync("api", "k", permits: -1).AsTask());
+
+        // A zero-capacity or zero-period policy rejects everything forever / divides by zero.
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RateLimiterOptions().AddPolicy("z", p => p.TokenBucket(0, TimeSpan.FromSeconds(1))));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RateLimiterOptions().AddPolicy("z", p => p.TokenBucket(1, TimeSpan.Zero)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RateLimiterOptions().AddPolicy("z", p => p.TokenBucket(1, TimeSpan.FromSeconds(1), burst: -1)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RateLimiterOptions().AddPolicy("z", p => p.SlidingWindow(0, TimeSpan.FromSeconds(1))));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new RateLimiterOptions().AddPolicy("z", p => p.SlidingWindow(1, TimeSpan.Zero)));
+    }
+
+    [Fact]
     public void Key_segments_cannot_be_forged_into_another_identity()
     {
         // Key.Of joins a dimension to its value with ':' and Key.Combine joins segments with '|'.
