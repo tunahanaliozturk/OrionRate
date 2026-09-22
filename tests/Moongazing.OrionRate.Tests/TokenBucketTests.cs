@@ -92,6 +92,27 @@ public sealed class TokenBucketTests
     }
 
     [Fact]
+    public async Task Waiting_exactly_the_advertised_retry_after_is_admitted()
+    {
+        // 3 per second: one token accrues in 1/3s, which is not a whole number of ticks. Truncating
+        // that down advertises an instant at which the token does not yet exist.
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("api", p => p.TokenBucket(permit: 3, per: TimeSpan.FromSeconds(1))));
+
+        for (var i = 0; i < 3; i++)
+        {
+            await limiter.AcquireAsync("api", "k");
+        }
+        var throttled = await limiter.AcquireAsync("api", "k");
+        Assert.False(throttled.Allowed);
+        Assert.True(throttled.RetryAfter > TimeSpan.Zero, $"a throttle must never advertise a zero wait (got {throttled.RetryAfter})");
+
+        clock.Advance(throttled.RetryAfter);
+        var retry = await limiter.AcquireAsync("api", "k");
+        Assert.True(retry.Allowed, $"waited the advertised {throttled.RetryAfter} and was rejected again (next {retry.RetryAfter})");
+    }
+
+    [Fact]
     public async Task A_cost_above_the_bucket_capacity_is_rejected_not_promised_an_impossible_retry()
     {
         var clock = new FakeOrionClock();

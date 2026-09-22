@@ -80,10 +80,19 @@ public sealed class TokenBucketPolicy : RateLimitPolicy
             return RateResult.Allow(PermitLimit, (long)s.Tokens);
         }
 
-        // Not enough tokens: time to accrue the shortfall at the refill rate.
+        // Not enough tokens: time to accrue the shortfall at the refill rate, rounded UP to the next
+        // tick. Rounding down (what TimeSpan.FromSeconds does) lands the caller a tick before the
+        // token exists, so honouring the advertised RetryAfter earns a second rejection - and once the
+        // shortfall is under half a tick the advertised wait truncates to zero, which is a busy-spin.
         var deficit = permits - s.Tokens;
-        var retryAfter = TimeSpan.FromSeconds(deficit / refillPerSecond);
-        return RateResult.Throttle(PermitLimit, (long)s.Tokens, retryAfter);
+        return RateResult.Throttle(PermitLimit, (long)s.Tokens, CeilingSeconds(deficit / refillPerSecond));
+    }
+
+    // TimeSpan.FromSeconds truncates toward zero; a retry-after must never land early.
+    private static TimeSpan CeilingSeconds(double seconds)
+    {
+        var ticks = Math.Ceiling(seconds * TimeSpan.TicksPerSecond);
+        return ticks >= long.MaxValue ? TimeSpan.MaxValue : TimeSpan.FromTicks((long)ticks);
     }
 
     private sealed class TokenBucketState

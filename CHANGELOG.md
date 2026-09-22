@@ -17,6 +17,12 @@ All notable changes to OrionRate are documented in this file. The format is base
   `ArgumentOutOfRangeException` when `permits` exceeds capacity (`permit + burst` for the token
   bucket, `permit` for the sliding window), matching `System.Threading.RateLimiting`. A rejection is
   still data — this is a caller bug, not a limit being hit.
+- **Token-bucket `RetryAfter` no longer lands a tick early** — the wait was computed with
+  `TimeSpan.FromSeconds`, which truncates toward zero, so a caller that honoured the advertised
+  instant arrived before the token existed and was rejected a second time. Once the remaining
+  shortfall fell under half a tick the advertised wait truncated to `TimeSpan.Zero`, turning a
+  throttle into a busy-spin. The shortfall is now rounded up to the next tick, and an over-long wait
+  saturates at `TimeSpan.MaxValue` instead of overflowing.
 
 ## [0.5.0] - 2026-07-29
 
