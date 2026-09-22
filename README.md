@@ -15,8 +15,9 @@ Rate limiting the **Orion** family way: token-bucket and sliding-window algorith
 
 - **Token bucket & sliding window** — `TokenBucket(permit, per, burst)` for sustained-rate-with-spikes, `SlidingWindow(permit, window)` for a precise trailing-window log. Both compute a correct `Retry-After`.
 - **Clock-driven, so deterministic in tests** — every refill and window runs on `OrionClock`. Under `FakeOrionClock`, draining a bucket and watching it refill takes no real time and never flakes.
-- **A typed decision** — `AcquireAsync` returns a `RateResult` (`Allowed`, `Limit`, `Remaining`, `RetryAfter`); a rejection is data, not an exception. Maps cleanly onto a `429` + `RateLimit-*` headers (the web mapping ships in a later wave).
+- **A typed decision** — `AcquireAsync` returns a `RateResult` (`Allowed`, `Limit`, `Remaining`, `RetryAfter`); a rejection is data, not an exception. Maps cleanly onto a `429` + `RateLimit-*` headers (the web mapping ships in a later wave). Asking for more permits than the policy could ever hold is a caller bug, not a limit being hit, and throws `ArgumentOutOfRangeException` — no wait would ever satisfy it.
 - **Thread-safe** — check-and-consume is atomic per key, so concurrent requests never over-admit.
+- **Bounded memory** — partitions whose state has decayed back to a brand-new key's (a refilled bucket, an empty window) are swept away, so a rotating API key or client IP cannot grow the state map without bound.
 - **Consistent keys** — a small `Key` helper (`Key.Tenant.Of("acme")`, `Key.Combine(...)`) so every call site formats and composes keys the same way.
 - **OpenTelemetry by default** — a `Moongazing.OrionRate` meter carrying `orion.rate.allowed`, `orion.rate.throttled`, and `orion.rate.remaining`, tagged by policy, on the family's `OrionInstrumentation` spine.
 - **AOT- and trim-clean**, verified by a native-binary smoke test in CI. Multi-targets `net8.0`, `net9.0`, `net10.0`.
