@@ -31,6 +31,10 @@ All notable changes to OrionRate are documented in this file. The format is base
   so the correction back to real time read as a full period of refill and handed out a whole bucket.
   Tokens are now derived from `(tokens at anchor, anchor, now)` in one step, and the anchor only ever
   moves forward.
+- **Sliding-window `RetryAfter` covers every slot the request needs** — it reported when the *oldest*
+  in-window request ages out, which frees exactly one slot. A caller asking for more than one permit
+  was sent back too early and rejected again (a 3-permit request on a full 5-slot window was told to
+  wait 5s when it needed 7s). It now reports when the last slot the request actually needs comes free.
 
 ## [0.5.0] - 2026-07-29
 

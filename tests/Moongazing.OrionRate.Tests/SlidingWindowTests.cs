@@ -77,4 +77,26 @@ public sealed class SlidingWindowTests
 
         Assert.True((await limiter.AcquireAsync("login", "k", permits: 5)).Allowed);
     }
+
+    [Fact]
+    public async Task Retry_after_covers_every_slot_a_multi_permit_request_needs()
+    {
+        // Five requests one second apart fill a 5-slot window. A 3-permit request needs three slots,
+        // so it can only succeed once the third-oldest ages out - not the first.
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("login", p => p.SlidingWindow(permit: 5, window: TimeSpan.FromSeconds(10))));
+
+        for (var i = 0; i < 5; i++)
+        {
+            Assert.True((await limiter.AcquireAsync("login", "k")).Allowed);
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        var throttled = await limiter.AcquireAsync("login", "k", permits: 3);
+        Assert.False(throttled.Allowed);
+
+        clock.Advance(throttled.RetryAfter);
+        var retry = await limiter.AcquireAsync("login", "k", permits: 3);
+        Assert.True(retry.Allowed, $"waited the advertised {throttled.RetryAfter} and was rejected again (next {retry.RetryAfter})");
+    }
 }

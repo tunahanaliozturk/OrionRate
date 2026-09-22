@@ -77,11 +77,27 @@ public sealed class SlidingWindowPolicy : RateLimitPolicy
             return RateResult.Allow(permit, permit - (count + permits));
         }
 
-        // Full window: the oldest in-window request frees a slot when it ages out.
-        var retryAfter = s.Timestamps.Count > 0
-            ? window - clock.GetElapsedTime(s.Timestamps.Peek())
-            : window;
-        return RateResult.Throttle(permit, Math.Max(0, permit - count), retryAfter);
+        // Full window. The request needs `needed` slots to come free, so it can only succeed once the
+        // needed-th oldest timestamp ages out - reporting the oldest one only frees a single slot and
+        // sends a multi-permit caller back into a second rejection. `permits <= permit` is enforced
+        // above, so `needed` is always between 1 and `count`.
+        var needed = (int)(count + (long)permits - permit);
+        var retryAfter = window - clock.GetElapsedTime(NthOldest(s.Timestamps, needed));
+        return RateResult.Throttle(permit, permit - count, retryAfter);
+    }
+
+    private static long NthOldest(Queue<long> timestamps, int n)
+    {
+        var seen = 0;
+        foreach (var timestamp in timestamps)
+        {
+            if (++seen == n)
+            {
+                return timestamp;
+            }
+        }
+
+        throw new System.Diagnostics.UnreachableException($"the window holds {timestamps.Count} timestamps but slot {n} was asked for.");
     }
 
     private sealed class SlidingWindowState
