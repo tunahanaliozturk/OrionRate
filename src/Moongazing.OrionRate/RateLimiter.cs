@@ -66,6 +66,9 @@ public sealed class RateLimiter : IRateLimiter
     /// <summary>The number of per-(policy, key) partitions currently held. For tests.</summary>
     internal int PartitionCount => entries.Count;
 
+    /// <summary>Test seam for scheduling an acquisition between lookup and its entry lock.</summary>
+    internal Action<string>? AfterEntryLookupForTests { get; set; }
+
     /// <inheritdoc />
     public ValueTask<RateResult> AcquireAsync(string policy, string key, int permits = 1, CancellationToken cancellationToken = default)
     {
@@ -83,12 +86,24 @@ public sealed class RateLimiter : IRateLimiter
         // A NUL separator realistically appears in neither a policy name nor a key, so the
         // (policy, key) composite never collides across policies.
         var composite = string.Concat(policy, "\0", key);
-        var entry = entries.GetOrAdd(composite, static (_, policy) => new Entry(policy), p);
-
         RateResult result;
-        lock (entry.Gate)
+        while (true)
         {
-            result = p.Evaluate(ref entry.State, clock, permits);
+            var entry = entries.GetOrAdd(composite, static (_, policy) => new Entry(policy), p);
+            AfterEntryLookupForTests?.Invoke(key);
+
+            lock (entry.Gate)
+            {
+                // A sweep may have removed this entry after GetOrAdd but before we acquired its
+                // gate. Spending its state would be lost when the next caller creates a fresh one.
+                if (entry.Retired)
+                {
+                    continue;
+                }
+
+                result = p.Evaluate(ref entry.State, clock, permits);
+                break;
+            }
         }
 
         diagnostics.Record(policy, result);
@@ -126,11 +141,12 @@ public sealed class RateLimiter : IRateLimiter
                 {
                     if (pair.Value.Policy.IsIdle(pair.Value.State, clock))
                     {
-                        // ponytail: an acquire that already read this entry out of the dictionary and
-                        // is waiting on its gate will mutate an orphan and lose its consumption. Only
-                        // provably-idle partitions are dropped, so the worst case is one request
-                        // admitted against a partition that was at full capacity anyway.
-                        entries.TryRemove(pair);
+                        // Readers that selected this entry before removal must retry against its
+                        // replacement rather than spend permits on an orphaned state.
+                        if (entries.TryRemove(pair))
+                        {
+                            pair.Value.Retired = true;
+                        }
                     }
                 }
             }
@@ -149,5 +165,8 @@ public sealed class RateLimiter : IRateLimiter
         public readonly RateLimitPolicy Policy = policy;
 
         public object? State;
+
+        // Protected by Gate. An acquisition that selected this entry before a sweep must retry.
+        public bool Retired;
     }
 }
