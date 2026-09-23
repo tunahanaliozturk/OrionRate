@@ -62,22 +62,20 @@ public sealed class SlidingWindowPolicy : RateLimitPolicy
 
         DropAgedOut(s, clock);
 
-        var count = s.Timestamps.Count;
-        if (count + permits <= permit)
+        var count = s.UsedPermits;
+        if (permits <= permit - count)
         {
             var now = clock.GetTimestamp();
-            for (var i = 0; i < permits; i++)
-            {
-                s.Timestamps.Enqueue(now);
-            }
-            return RateResult.Allow(permit, permit - (count + permits));
+            s.Timestamps.Enqueue(new TimestampBatch(now, permits));
+            s.UsedPermits += permits;
+            return RateResult.Allow(permit, permit - s.UsedPermits);
         }
 
         // Full window. The request needs `needed` slots to come free, so it can only succeed once the
         // needed-th oldest timestamp ages out - reporting the oldest one only frees a single slot and
         // sends a multi-permit caller back into a second rejection. `permits <= permit` is enforced
         // above, so `needed` is always between 1 and `count`.
-        var needed = (int)(count + (long)permits - permit);
+        var needed = permits - (permit - count);
         var retryAfter = window - clock.GetElapsedTime(NthOldest(s.Timestamps, needed));
         return RateResult.Throttle(permit, permit - count, retryAfter);
     }
@@ -93,34 +91,39 @@ public sealed class SlidingWindowPolicy : RateLimitPolicy
 
         // An empty log behaves exactly like a key that was never seen.
         DropAgedOut(s, clock);
-        return s.Timestamps.Count == 0;
+        return s.UsedPermits == 0;
     }
 
     // Drop timestamps that have aged out of the trailing window (they no longer count).
     private void DropAgedOut(SlidingWindowState s, IOrionClock clock)
     {
-        while (s.Timestamps.Count > 0 && clock.GetElapsedTime(s.Timestamps.Peek()) >= window)
+        while (s.Timestamps.Count > 0 && clock.GetElapsedTime(s.Timestamps.Peek().Timestamp) >= window)
         {
-            s.Timestamps.Dequeue();
+            s.UsedPermits -= s.Timestamps.Dequeue().Permits;
         }
     }
 
-    private static long NthOldest(Queue<long> timestamps, int n)
+    private static long NthOldest(Queue<TimestampBatch> timestamps, long n)
     {
-        var seen = 0;
-        foreach (var timestamp in timestamps)
+        long seen = 0;
+        foreach (var batch in timestamps)
         {
-            if (++seen == n)
+            seen += batch.Permits;
+            if (seen >= n)
             {
-                return timestamp;
+                return batch.Timestamp;
             }
         }
 
-        throw new System.Diagnostics.UnreachableException($"the window holds {timestamps.Count} timestamps but slot {n} was asked for.");
+        throw new System.Diagnostics.UnreachableException($"the window holds {seen} permits but slot {n} was asked for.");
     }
 
     private sealed class SlidingWindowState
     {
-        public Queue<long> Timestamps { get; } = new();
+        public Queue<TimestampBatch> Timestamps { get; } = new();
+
+        public long UsedPermits { get; set; }
     }
+
+    private readonly record struct TimestampBatch(long Timestamp, int Permits);
 }

@@ -114,4 +114,43 @@ public sealed class SlidingWindowTests
         clock.Advance(TimeSpan.FromTicks(1));
         Assert.True((await limiter.AcquireAsync("login", "k")).Allowed, "at exactly the window length the request has aged out");
     }
+
+    [Fact]
+    public async Task Retry_after_counts_permits_inside_weighted_timestamp_batches()
+    {
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("login", p => p.SlidingWindow(5, TimeSpan.FromSeconds(10))));
+
+        Assert.True((await limiter.AcquireAsync("login", "k", permits: 2)).Allowed); // t=0
+        clock.Advance(TimeSpan.FromSeconds(2));
+        Assert.True((await limiter.AcquireAsync("login", "k", permits: 3)).Allowed); // t=2
+        clock.Advance(TimeSpan.FromSeconds(1)); // t=3
+
+        var throttled = await limiter.AcquireAsync("login", "k", permits: 4);
+        Assert.False(throttled.Allowed);
+        Assert.Equal(TimeSpan.FromSeconds(9), throttled.RetryAfter); // four slots free only at t=12
+
+        clock.Advance(throttled.RetryAfter - TimeSpan.FromTicks(1));
+        Assert.False((await limiter.AcquireAsync("login", "k", permits: 4)).Allowed);
+        clock.Advance(TimeSpan.FromTicks(1));
+        Assert.True((await limiter.AcquireAsync("login", "k", permits: 4)).Allowed);
+    }
+
+    [Fact]
+    public void Large_cost_keeps_allocations_bounded_by_the_number_of_acquisitions()
+    {
+        var clock = new FakeOrionClock();
+        var policy = new SlidingWindowPolicy("bulk", 1_000_000, TimeSpan.FromMinutes(1));
+        object? warmup = null;
+        policy.Evaluate(ref warmup, clock, 1);
+
+        object? state = null;
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var result = policy.Evaluate(ref state, clock, 1_000_000);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.True(result.Allowed);
+        Assert.Equal(0, result.Remaining);
+        Assert.True(allocated < 64 * 1024, $"one acquisition allocated {allocated} bytes");
+    }
 }

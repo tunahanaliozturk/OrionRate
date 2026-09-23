@@ -55,6 +55,12 @@ All notable changes to OrionRate are documented in this file. The format is base
   identity's budget. `Custom` now rejects `:` and `|` in a dimension name, and `Of` / `Combine` reject
   `|` in a value or segment.
 
+### Changed
+
+- **Sliding-window state now stores one timestamp batch per acquisition, not per permit.** A
+  weighted request no longer allocates and enqueues one slot for every permit it consumes. Retry
+  times still account for the exact number of permits aging out at each timestamp.
+
 ## [0.5.0] - 2026-07-29
 
 The first release — the Orion family's Wave 1 rate-limiting foundation: token-bucket and
