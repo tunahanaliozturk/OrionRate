@@ -10,6 +10,10 @@ All notable changes to OrionRate are documented in this file. The format is base
 
 ### Fixed
 
+- **Idle sweeping no longer lets a waiting acquisition spend a removed partition.** A request
+  that selected an entry just before the sweep removed it could consume an orphaned budget while
+  the next request received a fresh full budget. Such requests now retry against the replacement
+  entry. A deterministic race test reproduces the double admission on the old path.
 - **A cost above the policy's capacity is rejected instead of promised an impossible retry**
   (**breaking**) — `AcquireAsync("api", key, permits: 50)` against a 5-token bucket (or a 5-slot
   window) used to return a throttle carrying a finite `RetryAfter`; waiting it out and retrying was
