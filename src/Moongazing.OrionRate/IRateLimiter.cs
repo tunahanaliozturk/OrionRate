@@ -21,5 +21,6 @@ public interface IRateLimiter
     /// <param name="cancellationToken">Cancellation token (honoured by distributed stores in later waves).</param>
     /// <returns>The decision.</returns>
     /// <exception cref="System.Collections.Generic.KeyNotFoundException">No policy named <paramref name="policy"/> is registered.</exception>
+    /// <exception cref="System.ArgumentOutOfRangeException"><paramref name="permits"/> is not positive, or exceeds the policy's capacity so the request could never be admitted.</exception>
     ValueTask<RateResult> AcquireAsync(string policy, string key, int permits = 1, CancellationToken cancellationToken = default);
 }

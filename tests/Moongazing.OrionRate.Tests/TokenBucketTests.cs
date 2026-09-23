@@ -3,6 +3,7 @@ namespace Moongazing.OrionRate.Tests;
 using System;
 using System.Threading.Tasks;
 
+using Moongazing.Orion.Abstractions.Time;
 using Moongazing.OrionClock.Testing;
 using Moongazing.OrionRate.Diagnostics;
 
@@ -92,6 +93,123 @@ public sealed class TokenBucketTests
     }
 
     [Fact]
+    public async Task A_rate_slower_than_one_permit_per_poll_still_accrues()
+    {
+        // 1 permit per 10s is 0.1/s. A caller polling once a second sees nine rejections and must be
+        // admitted on the tenth: the sub-permit refills have to accumulate, not evaporate.
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("slow", p => p.TokenBucket(permit: 1, per: TimeSpan.FromSeconds(10))));
+
+        Assert.True((await limiter.AcquireAsync("slow", "k")).Allowed);
+        for (var i = 1; i <= 9; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            Assert.False((await limiter.AcquireAsync("slow", "k")).Allowed, $"second {i} should still be dry");
+        }
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True((await limiter.AcquireAsync("slow", "k")).Allowed, "ten seconds at 1-per-10s accrued nothing");
+    }
+
+    [Fact]
+    public async Task A_backwards_clock_step_does_not_hand_out_a_free_bucket()
+    {
+        // NTP can step a clock backwards. The limiter must credit nothing for negative elapsed time,
+        // and must not re-anchor onto the rewound instant - doing so makes the correction back to
+        // real time look like an hour of refill.
+        var clock = new RewindableClock();
+        var options = new RateLimiterOptions();
+        options.AddPolicy("api", p => p.TokenBucket(permit: 10, per: TimeSpan.FromMinutes(1)));
+        var limiter = new RateLimiter(options.Build(), clock, new RateDiagnostics());
+
+        for (var i = 0; i < 10; i++)
+        {
+            Assert.True((await limiter.AcquireAsync("api", "k")).Allowed);
+        }
+
+        clock.Now -= TimeSpan.FromHours(1);
+        Assert.False((await limiter.AcquireAsync("api", "k")).Allowed, "backwards time refilled the bucket");
+
+        clock.Now += TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1); // corrected, 1s past the drain
+        var admitted = 0;
+        for (var i = 0; i < 20 && (await limiter.AcquireAsync("api", "k")).Allowed; i++)
+        {
+            admitted++;
+        }
+        Assert.True(admitted <= 1, $"one second of real elapsed time on a 10/min bucket admitted {admitted} requests");
+    }
+
+    [Fact]
+    public async Task Waiting_exactly_the_advertised_retry_after_is_admitted()
+    {
+        // 3 per second: one token accrues in 1/3s, which is not a whole number of ticks. Truncating
+        // that down advertises an instant at which the token does not yet exist.
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("api", p => p.TokenBucket(permit: 3, per: TimeSpan.FromSeconds(1))));
+
+        for (var i = 0; i < 3; i++)
+        {
+            await limiter.AcquireAsync("api", "k");
+        }
+        var throttled = await limiter.AcquireAsync("api", "k");
+        Assert.False(throttled.Allowed);
+        Assert.True(throttled.RetryAfter > TimeSpan.Zero, $"a throttle must never advertise a zero wait (got {throttled.RetryAfter})");
+
+        clock.Advance(throttled.RetryAfter);
+        var retry = await limiter.AcquireAsync("api", "k");
+        Assert.True(retry.Allowed, $"waited the advertised {throttled.RetryAfter} and was rejected again (next {retry.RetryAfter})");
+    }
+
+    [Fact]
+    public async Task Retry_after_accounts_for_floating_point_refill_rounding()
+    {
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("api", p => p.TokenBucket(permit: 2, per: TimeSpan.FromSeconds(21))));
+
+        Assert.True((await limiter.AcquireAsync("api", "k", permits: 2)).Allowed);
+        clock.Advance(TimeSpan.FromSeconds(14));
+        Assert.True((await limiter.AcquireAsync("api", "k")).Allowed);
+        var throttled = await limiter.AcquireAsync("api", "k", permits: 2);
+        Assert.False(throttled.Allowed);
+
+        clock.Advance(throttled.RetryAfter);
+        var retry = await limiter.AcquireAsync("api", "k", permits: 2);
+        Assert.True(retry.Allowed, $"retry after {throttled.RetryAfter} was rejected again (next {retry.RetryAfter})");
+    }
+
+    [Fact]
+    public async Task Retry_after_accounts_for_a_clock_rewound_behind_its_refill_anchor()
+    {
+        var clock = new RewindableClock();
+        var options = new RateLimiterOptions();
+        options.AddPolicy("api", p => p.TokenBucket(permit: 1, per: TimeSpan.FromSeconds(10)));
+        var limiter = new RateLimiter(options.Build(), clock, new RateDiagnostics());
+
+        Assert.True((await limiter.AcquireAsync("api", "k")).Allowed);
+        clock.Now -= TimeSpan.FromMinutes(1);
+        var throttled = await limiter.AcquireAsync("api", "k");
+        Assert.False(throttled.Allowed);
+
+        clock.Now += throttled.RetryAfter;
+        Assert.True((await limiter.AcquireAsync("api", "k")).Allowed);
+    }
+
+    [Fact]
+    public async Task A_cost_above_the_bucket_capacity_is_rejected_not_promised_an_impossible_retry()
+    {
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("api", p => p.TokenBucket(permit: 5, per: TimeSpan.FromSeconds(1))));
+
+        // 50 permits never fit in a 5-token bucket. Throttling would advertise a RetryAfter the
+        // caller can wait out forever and still be rejected.
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => limiter.AcquireAsync("api", "k", permits: 50).AsTask());
+
+        // Burst counts toward capacity, so a cost the bucket can actually hold still goes through.
+        var withBurst = Limiter(clock, o => o.AddPolicy("api", p => p.TokenBucket(permit: 5, per: TimeSpan.FromSeconds(1), burst: 5)));
+        Assert.True((await withBurst.AcquireAsync("api", "k", permits: 10)).Allowed);
+    }
+
+    [Fact]
     public async Task An_unknown_policy_throws()
     {
         var clock = new FakeOrionClock();
@@ -99,5 +217,19 @@ public sealed class TokenBucketTests
 
         await Assert.ThrowsAsync<System.Collections.Generic.KeyNotFoundException>(
             () => limiter.AcquireAsync("nope", "k").AsTask());
+    }
+
+    /// <summary>A clock that can be stepped backwards, the way NTP steps a real one.</summary>
+    private sealed class RewindableClock : IOrionClock
+    {
+        public DateTimeOffset Now { get; set; } = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+
+        public DateTimeOffset UtcNow => Now;
+
+        public DateTimeOffset GetUtcNow() => Now;
+
+        public long GetTimestamp() => Now.UtcTicks;
+
+        public TimeSpan GetElapsedTime(long startingTimestamp) => TimeSpan.FromTicks(Now.UtcTicks - startingTimestamp);
     }
 }

@@ -48,6 +48,15 @@ public sealed class TokenBucketPolicy : RateLimitPolicy
         {
             throw new ArgumentOutOfRangeException(nameof(permits), permits, "permits must be positive.");
         }
+        if (permits > capacity)
+        {
+            // A cost above capacity can never be admitted, however long the caller waits. Throttling
+            // it would hand back a RetryAfter that is a lie the caller can retry against forever.
+            throw new ArgumentOutOfRangeException(
+                nameof(permits),
+                permits,
+                $"permits exceeds the bucket capacity ({capacity}); the request could never be admitted.");
+        }
 
         if (state is not TokenBucketState s)
         {
@@ -55,26 +64,118 @@ public sealed class TokenBucketPolicy : RateLimitPolicy
             s = new TokenBucketState { Tokens = capacity, LastTimestamp = clock.GetTimestamp() };
             state = s;
         }
-        else
+
+        // The token count is a pure function of the anchor - the tokens held at LastTimestamp - and
+        // the time elapsed since it, so recompute it from the anchor instead of crediting the bucket
+        // on every call. Re-anchoring on a call that consumed nothing rounded the credit away (a rate
+        // below one permit per poll then accrued nothing at all, forever), and re-anchoring onto a
+        // clock that had stepped backwards turned the correction back to real time into a full refill.
+        var elapsed = clock.GetElapsedTime(s.LastTimestamp);
+        var available = elapsed > TimeSpan.Zero
+            ? Math.Min(capacity, s.Tokens + (elapsed.TotalSeconds * refillPerSecond))
+            : s.Tokens;
+
+        if (available >= permits)
         {
-            var elapsed = clock.GetElapsedTime(s.LastTimestamp);
-            s.LastTimestamp = clock.GetTimestamp();
+            s.Tokens = available - permits;
             if (elapsed > TimeSpan.Zero)
             {
-                s.Tokens = Math.Min(capacity, s.Tokens + (elapsed.TotalSeconds * refillPerSecond));
+                s.LastTimestamp = clock.GetTimestamp(); // the anchor only ever moves forward
             }
-        }
-
-        if (s.Tokens >= permits)
-        {
-            s.Tokens -= permits;
             return RateResult.Allow(PermitLimit, (long)s.Tokens);
         }
 
-        // Not enough tokens: time to accrue the shortfall at the refill rate.
-        var deficit = permits - s.Tokens;
-        var retryAfter = TimeSpan.FromSeconds(deficit / refillPerSecond);
-        return RateResult.Throttle(PermitLimit, (long)s.Tokens, retryAfter);
+        // Not enough tokens: round up the mathematical wait and verify it against the same floating-
+        // point refill calculation used for admission. A rounded-up duration can still land one tick
+        // early when available is represented just below an integer at the advertised instant.
+        var deficit = permits - available;
+        return RateResult.Throttle(PermitLimit, (long)available, RetryAfter(s, elapsed, permits, deficit));
+    }
+
+    private TimeSpan RetryAfter(TokenBucketState state, TimeSpan elapsed, int permits, double deficit)
+    {
+        var ticks = Math.Max(1, CeilingSeconds(deficit / refillPerSecond).Ticks);
+        if (WouldAdmitAfter(state, elapsed, permits, ticks))
+        {
+            return TimeSpan.FromTicks(ticks);
+        }
+
+        // The common rounding error needs one tick. For a rewound clock or extreme rates, find a
+        // sufficient bound exponentially, then the earliest sufficient tick by binary search.
+        var insufficient = ticks;
+        ticks = ticks == long.MaxValue ? ticks : ticks + 1;
+        if (WouldAdmitAfter(state, elapsed, permits, ticks))
+        {
+            return TimeSpan.FromTicks(ticks);
+        }
+
+        while (ticks < long.MaxValue)
+        {
+            insufficient = ticks;
+            ticks = ticks > long.MaxValue / 2 ? long.MaxValue : ticks * 2;
+            if (WouldAdmitAfter(state, elapsed, permits, ticks))
+            {
+                break;
+            }
+        }
+
+        if (ticks == long.MaxValue && !WouldAdmitAfter(state, elapsed, permits, ticks))
+        {
+            return TimeSpan.MaxValue;
+        }
+
+        while (insufficient + 1 < ticks)
+        {
+            var middle = insufficient + ((ticks - insufficient) / 2);
+            if (WouldAdmitAfter(state, elapsed, permits, middle))
+            {
+                ticks = middle;
+            }
+            else
+            {
+                insufficient = middle;
+            }
+        }
+
+        return TimeSpan.FromTicks(ticks);
+    }
+
+    private bool WouldAdmitAfter(TokenBucketState state, TimeSpan elapsed, int permits, long retryTicks)
+    {
+        var elapsedTicks = elapsed.Ticks;
+        var futureTicks = elapsedTicks > 0 && retryTicks > long.MaxValue - elapsedTicks
+            ? long.MaxValue
+            : elapsedTicks + retryTicks;
+        if (futureTicks <= 0)
+        {
+            return state.Tokens >= permits;
+        }
+
+        var projected = Math.Min(capacity, state.Tokens + (TimeSpan.FromTicks(futureTicks).TotalSeconds * refillPerSecond));
+        return projected >= permits;
+    }
+
+    // TimeSpan.FromSeconds truncates toward zero; a retry-after must never land early.
+    private static TimeSpan CeilingSeconds(double seconds)
+    {
+        var ticks = Math.Ceiling(seconds * TimeSpan.TicksPerSecond);
+        return ticks >= long.MaxValue ? TimeSpan.MaxValue : TimeSpan.FromTicks((long)ticks);
+    }
+
+    /// <inheritdoc />
+    public override bool IsIdle(object? state, IOrionClock clock)
+    {
+        ArgumentNullException.ThrowIfNull(clock);
+        if (state is not TokenBucketState s)
+        {
+            return true;
+        }
+
+        var elapsed = clock.GetElapsedTime(s.LastTimestamp);
+        // A bucket back at capacity behaves exactly like one that was never created.
+        return elapsed > TimeSpan.Zero
+            ? s.Tokens + (elapsed.TotalSeconds * refillPerSecond) >= capacity
+            : s.Tokens >= capacity;
     }
 
     private sealed class TokenBucketState

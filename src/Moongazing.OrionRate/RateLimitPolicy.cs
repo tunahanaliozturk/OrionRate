@@ -35,4 +35,15 @@ public abstract class RateLimitPolicy
     /// <param name="permits">The number of permits requested (usually 1).</param>
     /// <returns>The decision.</returns>
     public abstract RateResult Evaluate(ref object? state, IOrionClock clock, int permits);
+
+    /// <summary>
+    /// Whether <paramref name="state"/> has decayed back to the value a brand-new key would start
+    /// from, so dropping the partition is indistinguishable from keeping it. The limiter uses this to
+    /// evict idle partitions instead of holding one entry per key forever. Called under the key's
+    /// lock, and free to prune expired entries out of <paramref name="state"/> on the way.
+    /// <para>Defaults to <see langword="false"/>: a custom policy is never evicted until it opts in.</para>
+    /// </summary>
+    /// <param name="state">The per-key counter state.</param>
+    /// <param name="clock">The clock all window / refill math runs on.</param>
+    public virtual bool IsIdle(object? state, IOrionClock clock) => false;
 }

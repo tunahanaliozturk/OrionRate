@@ -63,4 +63,55 @@ public sealed class SlidingWindowTests
         // The t=0 request ages out at t=10, so ~6s from now.
         Assert.Equal(6, throttled.RetryAfter.TotalSeconds, precision: 1);
     }
+
+    [Fact]
+    public async Task A_cost_above_the_window_limit_is_rejected_not_promised_an_impossible_retry()
+    {
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("login", p => p.SlidingWindow(permit: 5, window: TimeSpan.FromSeconds(10))));
+
+        // A 50-permit cost never fits a 5-slot window, so a throttle would advertise a RetryAfter
+        // that is never true.
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => limiter.AcquireAsync("login", "k", permits: 50).AsTask());
+
+        Assert.True((await limiter.AcquireAsync("login", "k", permits: 5)).Allowed);
+    }
+
+    [Fact]
+    public async Task Retry_after_covers_every_slot_a_multi_permit_request_needs()
+    {
+        // Five requests one second apart fill a 5-slot window. A 3-permit request needs three slots,
+        // so it can only succeed once the third-oldest ages out - not the first.
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("login", p => p.SlidingWindow(permit: 5, window: TimeSpan.FromSeconds(10))));
+
+        for (var i = 0; i < 5; i++)
+        {
+            Assert.True((await limiter.AcquireAsync("login", "k")).Allowed);
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        var throttled = await limiter.AcquireAsync("login", "k", permits: 3);
+        Assert.False(throttled.Allowed);
+
+        clock.Advance(throttled.RetryAfter);
+        var retry = await limiter.AcquireAsync("login", "k", permits: 3);
+        Assert.True(retry.Allowed, $"waited the advertised {throttled.RetryAfter} and was rejected again (next {retry.RetryAfter})");
+    }
+
+    [Fact]
+    public async Task A_request_ages_out_at_exactly_the_window_length_and_not_a_tick_sooner()
+    {
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("login", p => p.SlidingWindow(permit: 1, window: TimeSpan.FromSeconds(10))));
+
+        Assert.True((await limiter.AcquireAsync("login", "k")).Allowed); // t=0
+
+        clock.Advance(TimeSpan.FromSeconds(10) - TimeSpan.FromTicks(1));
+        Assert.False((await limiter.AcquireAsync("login", "k")).Allowed, "one tick short of the window still counts");
+
+        clock.Advance(TimeSpan.FromTicks(1));
+        Assert.True((await limiter.AcquireAsync("login", "k")).Allowed, "at exactly the window length the request has aged out");
+    }
 }
