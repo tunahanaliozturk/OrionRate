@@ -17,7 +17,7 @@ Rate limiting the **Orion** family way: token-bucket and sliding-window algorith
 - **Clock-driven, so deterministic in tests** — every refill and window runs on `OrionClock`. Under `FakeOrionClock`, draining a bucket and watching it refill takes no real time and never flakes.
 - **A typed decision** — `AcquireAsync` returns a `RateResult` (`Allowed`, `Limit`, `Remaining`, `RetryAfter`); a rejection is data, not an exception. Maps cleanly onto a `429` + `RateLimit-*` headers (the web mapping ships in a later wave). Asking for more permits than the policy could ever hold is a caller bug, not a limit being hit, and throws `ArgumentOutOfRangeException` — no wait would ever satisfy it.
 - **Thread-safe** — check-and-consume is atomic per key, so concurrent requests never over-admit.
-- **Bounded memory** — partitions whose state has decayed back to a brand-new key's (a refilled bucket, an empty window) are swept away, so a rotating API key or client IP cannot grow the state map without bound.
+- **Idle-state reclamation** — partitions whose state has decayed back to a brand-new key's (a refilled bucket, an empty window) are swept away. Active partitions remain resident; this is not a hard memory bound.
 - **Consistent keys** — a small `Key` helper (`Key.Tenant.Of("acme")`, `Key.Combine(...)`) so every call site formats and composes keys the same way.
 - **OpenTelemetry by default** — a `Moongazing.OrionRate` meter carrying `orion.rate.allowed`, `orion.rate.throttled`, and `orion.rate.remaining`, tagged by policy, on the family's `OrionInstrumentation` spine.
 - **AOT- and trim-clean**, verified by a native-binary smoke test in CI. Multi-targets `net8.0`, `net9.0`, `net10.0`.
@@ -81,6 +81,20 @@ Assert.Equal(0.6, throttled.RetryAfter.TotalSeconds, precision: 2); // one token
 clock.Advance(TimeSpan.FromSeconds(60));                            // no real waiting
 Assert.True((await limiter.AcquireAsync("api", "tenant:acme")).Allowed);
 ```
+
+## Key cardinality and deployment boundary
+
+The in-memory limiter applies limits **per process**. With three independent replicas, a nominal
+100-per-minute policy can admit up to 300 requests across them. It is not a distributed quota until
+the planned shared store is available.
+
+An idle sweep reclaims a partition only after its bucket refills or its window empties. A caller
+that can keep generating distinct active keys can still grow the state map until those states age
+out. Build keys from trusted, normalized identities (for example a validated tenant or API-key ID),
+not an arbitrary request header. For endpoints exposed to high-cardinality identities such as client
+IP addresses, enforce a separate admission/cardinality limit at the edge and choose windows whose
+state lifetime fits the host's memory budget. The `Key` helper prevents delimiter collisions; it
+does not authenticate or cap the identities it receives.
 
 ## Observability
 
