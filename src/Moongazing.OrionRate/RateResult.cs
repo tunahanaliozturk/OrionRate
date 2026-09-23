@@ -5,8 +5,8 @@ using System;
 /// <summary>
 /// The outcome of a rate-limit decision: whether the request was admitted, how much of the limit
 /// remains, and — when throttled — how long to wait before retrying. Maps directly onto an HTTP
-/// <c>429</c> with <c>Retry-After</c> and <c>RateLimit-*</c> headers (the web mapping ships with the
-/// Wave 3 middleware).
+/// <c>429</c> with <c>Retry-After</c> and <c>RateLimit-*</c> headers via the optional
+/// <c>OrionRate.AspNetCore</c> package.
 /// </summary>
 public readonly struct RateResult : IEquatable<RateResult>
 {

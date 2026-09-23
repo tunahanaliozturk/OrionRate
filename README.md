@@ -15,17 +15,23 @@ Rate limiting the **Orion** family way: token-bucket and sliding-window algorith
 
 - **Token bucket & sliding window** — `TokenBucket(permit, per, burst)` for sustained-rate-with-spikes, `SlidingWindow(permit, window)` for a precise trailing-window log. Both compute a correct `Retry-After`.
 - **Clock-driven, so deterministic in tests** — every refill and window runs on `OrionClock`. Under `FakeOrionClock`, draining a bucket and watching it refill takes no real time and never flakes.
-- **A typed decision** — `AcquireAsync` returns a `RateResult` (`Allowed`, `Limit`, `Remaining`, `RetryAfter`); a rejection is data, not an exception. Maps cleanly onto a `429` + `RateLimit-*` headers (the web mapping ships in a later wave). Asking for more permits than the policy could ever hold is a caller bug, not a limit being hit, and throws `ArgumentOutOfRangeException` — no wait would ever satisfy it.
+- **A typed decision** — `AcquireAsync` returns a `RateResult` (`Allowed`, `Limit`, `Remaining`, `RetryAfter`); a rejection is data, not an exception. The optional ASP.NET Core package maps it to a `429` + `Retry-After`/`RateLimit-*` headers. Asking for more permits than the policy could ever hold is a caller bug, not a limit being hit, and throws `ArgumentOutOfRangeException` — no wait would ever satisfy it.
 - **Thread-safe** — check-and-consume is atomic per key, so concurrent requests never over-admit.
 - **Idle-state reclamation** — partitions whose state has decayed back to a brand-new key's (a refilled bucket, an empty window) are swept away. Active partitions remain resident; this is not a hard memory bound.
 - **Consistent keys** — a small `Key` helper (`Key.Tenant.Of("acme")`, `Key.Combine(...)`) so every call site formats and composes keys the same way.
 - **OpenTelemetry by default** — a `Moongazing.OrionRate` meter carrying `orion.rate.allowed`, `orion.rate.throttled`, and `orion.rate.remaining`, tagged by policy, on the family's `OrionInstrumentation` spine.
-- **AOT- and trim-clean**, verified by a native-binary smoke test in CI. Multi-targets `net8.0`, `net9.0`, `net10.0`.
+- **AOT- and trim-clean core**, verified by a native-binary smoke test in CI. Multi-targets `net8.0`, `net9.0`, `net10.0`. The optional ASP.NET Core package is tested on all three targets but does not yet make an AOT claim.
 
 ## Install
 
 ```bash
 dotnet add package OrionRate
+```
+
+For Minimal API endpoints or route groups, also install `OrionRate.AspNetCore`:
+
+```bash
+dotnet add package OrionRate.AspNetCore
 ```
 
 ## Quick start (DI)
@@ -60,6 +66,32 @@ var options = new RateLimiterOptions()
 var limiter = RateLimiter.Create(options, new OrionClock());
 RateResult r = await limiter.AcquireAsync("api", Key.Ip.Of("203.0.113.4"));
 ```
+
+## ASP.NET Core Minimal APIs
+
+```csharp
+using Moongazing.OrionRate;
+using Moongazing.OrionRate.AspNetCore;
+using Moongazing.OrionRate.DependencyInjection;
+
+builder.Services.AddOrionRate(options =>
+    options.AddPolicy("api", p => p.SlidingWindow(100, TimeSpan.FromMinutes(1))));
+
+var app = builder.Build();
+app.MapGet("/orders", () => Results.Ok())
+    .RequireAuthorization() // configure authorization to require a validated tenant_id claim
+    .RequireOrionRateLimit("api", context => Key.Tenant.Of(
+        context.User.FindFirst("tenant_id")?.Value
+            ?? throw new InvalidOperationException("Authenticated tenant_id claim required")));
+```
+
+The filter works on endpoints and route groups. It resolves `IRateLimiter` from the request scope,
+passes `RequestAborted`, and returns a problem-details `429` without running the endpoint when the
+budget is exhausted. `RateLimit-Limit` and `RateLimit-Remaining` are emitted on both outcomes;
+`Retry-After` is emitted on rejection, rounded up to a whole second. A missing or blank key fails
+closed instead of merging callers into a shared empty-key budget. Choose keys from authenticated,
+normalized identities; **do not trust a client-supplied identity header**. The package uses the
+in-memory limiter: every replica has its own independent budget.
 
 ## Testing — limits fast-forward, no real waits
 
@@ -102,7 +134,7 @@ A `Moongazing.OrionRate` meter records `orion.rate.allowed`, `orion.rate.throttl
 
 ## Roadmap
 
-This is the **Wave 1** foundation: in-memory token-bucket / sliding-window on `OrionClock`, AOT-clean. Later waves add a Redis distributed store (atomic Lua, correct across replicas), an ASP.NET Core middleware (`RequireRateLimit("policy")` with RFC 9457 `429` + `RateLimit-*` headers and request-driven `KeyBy` resolvers), and `OrionLedger`-sourced per-API-key quotas. See [CHANGELOG.md](CHANGELOG.md).
+The core is in-memory token-bucket / sliding-window on `OrionClock`, AOT-clean. The optional ASP.NET Core endpoint filter now supplies HTTP mapping. Later waves may add a Redis distributed store (atomic Lua, correct across replicas) and `OrionLedger`-sourced per-API-key quotas. See [CHANGELOG.md](CHANGELOG.md).
 
 OrionRate is app-level fairness/quota, not an API gateway or WAF; it *reads* quotas (from `OrionLedger`, in a later wave) rather than billing usage; and it is the server-side mirror of client-side backoff (which lives in [OrionResilience](https://github.com/tunahanaliozturk/OrionResilience)).
 

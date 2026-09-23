@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>OrionRate.AspNetCore</PackageId>
+    <Description>ASP.NET Core endpoint and route-group rate limiting backed by OrionRate.</Description>
+    <PackageTags>orion;rate-limiting;aspnetcore;minimal-api;throttling</PackageTags>
+    <RootNamespace>Moongazing.OrionRate.AspNetCore</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Moongazing.OrionRate/Moongazing.OrionRate.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Moongazing.OrionRate.Tests" />
+  </ItemGroup>
+</Project>
