@@ -85,12 +85,74 @@ public sealed class TokenBucketPolicy : RateLimitPolicy
             return RateResult.Allow(PermitLimit, (long)s.Tokens);
         }
 
-        // Not enough tokens: time to accrue the shortfall at the refill rate, rounded UP to the next
-        // tick. Rounding down (what TimeSpan.FromSeconds does) lands the caller a tick before the
-        // token exists, so honouring the advertised RetryAfter earns a second rejection - and once the
-        // shortfall is under half a tick the advertised wait truncates to zero, which is a busy-spin.
+        // Not enough tokens: round up the mathematical wait and verify it against the same floating-
+        // point refill calculation used for admission. A rounded-up duration can still land one tick
+        // early when available is represented just below an integer at the advertised instant.
         var deficit = permits - available;
-        return RateResult.Throttle(PermitLimit, (long)available, CeilingSeconds(deficit / refillPerSecond));
+        return RateResult.Throttle(PermitLimit, (long)available, RetryAfter(s, elapsed, permits, deficit));
+    }
+
+    private TimeSpan RetryAfter(TokenBucketState state, TimeSpan elapsed, int permits, double deficit)
+    {
+        var ticks = Math.Max(1, CeilingSeconds(deficit / refillPerSecond).Ticks);
+        if (WouldAdmitAfter(state, elapsed, permits, ticks))
+        {
+            return TimeSpan.FromTicks(ticks);
+        }
+
+        // The common rounding error needs one tick. For a rewound clock or extreme rates, find a
+        // sufficient bound exponentially, then the earliest sufficient tick by binary search.
+        var insufficient = ticks;
+        ticks = ticks == long.MaxValue ? ticks : ticks + 1;
+        if (WouldAdmitAfter(state, elapsed, permits, ticks))
+        {
+            return TimeSpan.FromTicks(ticks);
+        }
+
+        while (ticks < long.MaxValue)
+        {
+            insufficient = ticks;
+            ticks = ticks > long.MaxValue / 2 ? long.MaxValue : ticks * 2;
+            if (WouldAdmitAfter(state, elapsed, permits, ticks))
+            {
+                break;
+            }
+        }
+
+        if (ticks == long.MaxValue && !WouldAdmitAfter(state, elapsed, permits, ticks))
+        {
+            return TimeSpan.MaxValue;
+        }
+
+        while (insufficient + 1 < ticks)
+        {
+            var middle = insufficient + ((ticks - insufficient) / 2);
+            if (WouldAdmitAfter(state, elapsed, permits, middle))
+            {
+                ticks = middle;
+            }
+            else
+            {
+                insufficient = middle;
+            }
+        }
+
+        return TimeSpan.FromTicks(ticks);
+    }
+
+    private bool WouldAdmitAfter(TokenBucketState state, TimeSpan elapsed, int permits, long retryTicks)
+    {
+        var elapsedTicks = elapsed.Ticks;
+        var futureTicks = elapsedTicks > 0 && retryTicks > long.MaxValue - elapsedTicks
+            ? long.MaxValue
+            : elapsedTicks + retryTicks;
+        if (futureTicks <= 0)
+        {
+            return state.Tokens >= permits;
+        }
+
+        var projected = Math.Min(capacity, state.Tokens + (TimeSpan.FromTicks(futureTicks).TotalSeconds * refillPerSecond));
+        return projected >= permits;
     }
 
     // TimeSpan.FromSeconds truncates toward zero; a retry-after must never land early.

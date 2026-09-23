@@ -21,7 +21,8 @@ All notable changes to OrionRate are documented in this file. The format is base
   `TimeSpan.FromSeconds`, which truncates toward zero, so a caller that honoured the advertised
   instant arrived before the token existed and was rejected a second time. Once the remaining
   shortfall fell under half a tick the advertised wait truncated to `TimeSpan.Zero`, turning a
-  throttle into a busy-spin. The shortfall is now rounded up to the next tick, and an over-long wait
+  throttle into a busy-spin. The shortfall is rounded up and verified against the admission
+  calculation, including floating-point rounding and a backwards clock step; an over-long wait
   saturates at `TimeSpan.MaxValue` instead of overflowing.
 - **Token-bucket refill is computed from a stable anchor** — the bucket re-stamped its refill
   timestamp on every call, including calls that credited or consumed nothing. Two consequences:

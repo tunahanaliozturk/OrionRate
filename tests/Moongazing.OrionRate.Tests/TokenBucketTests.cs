@@ -126,10 +126,10 @@ public sealed class TokenBucketTests
             Assert.True((await limiter.AcquireAsync("api", "k")).Allowed);
         }
 
-        clock.Now = clock.Now - TimeSpan.FromHours(1);
+        clock.Now -= TimeSpan.FromHours(1);
         Assert.False((await limiter.AcquireAsync("api", "k")).Allowed, "backwards time refilled the bucket");
 
-        clock.Now = clock.Now + TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1); // corrected, 1s past the drain
+        clock.Now += TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1); // corrected, 1s past the drain
         var admitted = 0;
         for (var i = 0; i < 20 && (await limiter.AcquireAsync("api", "k")).Allowed; i++)
         {
@@ -157,6 +157,40 @@ public sealed class TokenBucketTests
         clock.Advance(throttled.RetryAfter);
         var retry = await limiter.AcquireAsync("api", "k");
         Assert.True(retry.Allowed, $"waited the advertised {throttled.RetryAfter} and was rejected again (next {retry.RetryAfter})");
+    }
+
+    [Fact]
+    public async Task Retry_after_accounts_for_floating_point_refill_rounding()
+    {
+        var clock = new FakeOrionClock();
+        var limiter = Limiter(clock, o => o.AddPolicy("api", p => p.TokenBucket(permit: 2, per: TimeSpan.FromSeconds(21))));
+
+        Assert.True((await limiter.AcquireAsync("api", "k", permits: 2)).Allowed);
+        clock.Advance(TimeSpan.FromSeconds(14));
+        Assert.True((await limiter.AcquireAsync("api", "k")).Allowed);
+        var throttled = await limiter.AcquireAsync("api", "k", permits: 2);
+        Assert.False(throttled.Allowed);
+
+        clock.Advance(throttled.RetryAfter);
+        var retry = await limiter.AcquireAsync("api", "k", permits: 2);
+        Assert.True(retry.Allowed, $"retry after {throttled.RetryAfter} was rejected again (next {retry.RetryAfter})");
+    }
+
+    [Fact]
+    public async Task Retry_after_accounts_for_a_clock_rewound_behind_its_refill_anchor()
+    {
+        var clock = new RewindableClock();
+        var options = new RateLimiterOptions();
+        options.AddPolicy("api", p => p.TokenBucket(permit: 1, per: TimeSpan.FromSeconds(10)));
+        var limiter = new RateLimiter(options.Build(), clock, new RateDiagnostics());
+
+        Assert.True((await limiter.AcquireAsync("api", "k")).Allowed);
+        clock.Now -= TimeSpan.FromMinutes(1);
+        var throttled = await limiter.AcquireAsync("api", "k");
+        Assert.False(throttled.Allowed);
+
+        clock.Now += throttled.RetryAfter;
+        Assert.True((await limiter.AcquireAsync("api", "k")).Allowed);
     }
 
     [Fact]
