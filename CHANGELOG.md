@@ -60,6 +60,8 @@ All notable changes to OrionRate are documented in this file. The format is base
 
 ### Changed
 
+- Updated Microsoft.Extensions dependency-injection references to 10.0.12 while retaining
+  net8.0/net9.0/net10.0 support. Test SDK, xUnit and its runner use current stable releases.
 - **Sliding-window state now stores one timestamp batch per acquisition, not per permit.** A
   weighted request no longer allocates and enqueues one slot for every permit it consumes. Retry
   times still account for the exact number of permits aging out at each timestamp.
