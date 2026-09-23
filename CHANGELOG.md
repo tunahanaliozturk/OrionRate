@@ -48,6 +48,8 @@ All notable changes to OrionRate are documented in this file. The format is base
   a rotating key was an unbounded memory leak an attacker could drive. Partitions whose state has
   decayed back to a brand-new key's — a bucket refilled to capacity, a window with nothing left in it
   — are now swept off the acquire path, at most once a minute and only once the map is worth walking.
+  This reclaims idle state but does not impose a hard upper bound on active key cardinality; hosts
+  must control untrusted identity inputs separately.
   `RateLimitPolicy.IsIdle` is the opt-in; it defaults to `false`, so a custom policy keeps the old
   behaviour until it overrides it.
 - **`Key` rejects values that forge another identity's key** (**breaking**) — `Key.Of` joins a
