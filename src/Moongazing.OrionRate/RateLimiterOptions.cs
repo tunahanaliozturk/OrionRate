@@ -56,6 +56,7 @@ public sealed class RatePolicyBuilder
     /// <returns>This builder, for chaining.</returns>
     public RatePolicyBuilder TokenBucket(long permit, TimeSpan per, long burst = 0)
     {
+        EnsureUnconfigured();
         policy = new TokenBucketPolicy(name, permit, per, burst);
         return this;
     }
@@ -66,6 +67,7 @@ public sealed class RatePolicyBuilder
     /// <returns>This builder, for chaining.</returns>
     public RatePolicyBuilder SlidingWindow(long permit, TimeSpan window)
     {
+        EnsureUnconfigured();
         policy = new SlidingWindowPolicy(name, permit, window);
         return this;
     }
@@ -73,4 +75,12 @@ public sealed class RatePolicyBuilder
     internal RateLimitPolicy Build() =>
         policy ?? throw new InvalidOperationException(
             $"Rate-limit policy '{name}' must choose an algorithm (call TokenBucket or SlidingWindow).");
+
+    private void EnsureUnconfigured()
+    {
+        if (policy is not null)
+        {
+            throw new InvalidOperationException($"Rate-limit policy '{name}' already has an algorithm.");
+        }
+    }
 }

@@ -10,6 +10,9 @@ All notable changes to OrionRate are documented in this file. The format is base
 
 ### Fixed
 
+- **Policy builders reject a second algorithm selection** (**breaking**). Calling `TokenBucket`
+  and `SlidingWindow` (or either one twice) on the same builder previously replaced the first
+  algorithm silently despite the one-algorithm contract. Misconfiguration now fails at startup.
 - **Idle sweeping no longer lets a waiting acquisition spend a removed partition.** A request
   that selected an entry just before the sweep removed it could consume an orphaned budget while
   the next request received a fresh full budget. Such requests now retry against the replacement
