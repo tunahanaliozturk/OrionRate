@@ -13,6 +13,7 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   SOLUTION_PATH: Moongazing.OrionRate.sln
+  TEST_PROJECT_PATH: tests/Moongazing.OrionRate.Tests/Moongazing.OrionRate.Tests.csproj
   AOT_SMOKE_PATH: tests/Moongazing.OrionRate.AotSmoke/Moongazing.OrionRate.AotSmoke.csproj
 
 jobs:
@@ -20,20 +21,21 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dotnet-version: ['8.0.x', '9.0.x', '10.0.x']
+        framework: ['net8.0', 'net9.0', 'net10.0']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup .NET ${{ matrix.dotnet-version }}
+      - name: Setup supported .NET runtimes
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ matrix.dotnet-version }}
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
       - name: Restore
-        run: dotnet restore ${{ env.SOLUTION_PATH }}
-      - name: Build
-        run: dotnet build ${{ env.SOLUTION_PATH }} --no-restore --configuration Release
-      - name: Test
-        run: dotnet test ${{ env.SOLUTION_PATH }} --no-restore --configuration Release --verbosity normal
+        run: dotnet restore ${{ env.TEST_PROJECT_PATH }}
+      - name: Test ${{ matrix.framework }}
+        run: dotnet test ${{ env.TEST_PROJECT_PATH }} --no-restore --configuration Release --framework ${{ matrix.framework }} --verbosity normal
 
   aot-smoke:
     # OrionRate's AOT exit criterion: a NativeAOT publish with zero trim/AOT warnings that exercises
