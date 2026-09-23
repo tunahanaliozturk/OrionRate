@@ -8,6 +8,11 @@ All notable changes to OrionRate are documented in this file. The format is base
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-23
+
+The first stable OrionRate release. In-memory limits remain per process; a shared/distributed
+budget is not included. The optional ASP.NET Core package has the same version as the core.
+
 ### Added
 
 - **`OrionRate.AspNetCore`** — an optional Minimal API endpoint/route-group filter. Applications
