@@ -7,9 +7,9 @@
 [![CI/CD](https://github.com/tunahanaliozturk/OrionRate/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/tunahanaliozturk/OrionRate/actions/workflows/ci-cd.yml)
 [![NuGet](https://img.shields.io/nuget/v/OrionRate.svg)](https://www.nuget.org/packages/OrionRate/)
 
-Rate limiting the **Orion** family way: token-bucket and sliding-window algorithms whose refill and window math run on an `OrionClock` `TimeProvider`, so a fake clock fast-forwards every limit in tests. `AcquireAsync` returns a typed `RateResult` — allowed, remaining, retry-after — with OpenTelemetry by default.
+Rate limiting the **Orion** family way: token-bucket and sliding-window algorithms whose refill and window math run on an `OrionClock` `TimeProvider`, so a fake clock fast-forwards every limit in tests. `AcquireAsync` returns a typed `RateResult` — allowed, remaining, retry-after — with OpenTelemetry by default. The optional ASP.NET Core package adds endpoint and route-group filters.
 
-`System.Threading.RateLimiting` (the BCL primitive) is excellent and OrionRate builds on the same bucket math for the in-process case. But it limits *per process*: three replicas behind a load balancer turn a "100/min" limit into 300. Its partition-key model is low-level, so every app re-writes "resolve the key from the API key / tenant / route." And there is no notion of a *quota tied to an identity you already issued*. OrionRate is the opinionated layer that closes those gaps — starting, in this release, with a testable, observable in-memory core.
+`System.Threading.RateLimiting` (the BCL primitive) is excellent and OrionRate builds on the same bucket math for the in-process case. But an in-memory limiter applies *per process*: three replicas behind a load balancer turn a "100/min" limit into 300. OrionRate adds typed decisions, clock-driven testing, and explicit identity-key selection for Minimal APIs. It does **not** yet provide a shared quota across replicas.
 
 ## Features
 
@@ -140,7 +140,7 @@ OrionRate is app-level fairness/quota, not an API gateway or WAF; it *reads* quo
 
 ## Versioning
 
-Follows [Semantic Versioning](https://semver.org/). Multi-targets `net8.0`, `net9.0`, and `net10.0`. Binds to `Orion.Abstractions` 1.x and `OrionClock` 0.9.x.
+`OrionRate` and `OrionRate.AspNetCore` ship at **1.0.0** and follow [Semantic Versioning](https://semver.org/). Both target `net8.0`, `net9.0`, and `net10.0`. The core references `Orion.Abstractions` 1.2.0 and `OrionClock` 0.9.0.
 
 ## Documentation
 
