@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <PackageId>OrionRate</PackageId>
-    <Description>Rate limiting the Orion family way: token-bucket and sliding-window algorithms whose refill/window math runs on an OrionClock TimeProvider, so a fake clock fast-forwards every window in tests. AcquireAsync returns a typed RateResult (allowed, remaining, retry-after), with OpenTelemetry by default. Wave 1 is the in-memory core; a Redis distributed store and ASP.NET middleware land in later waves.</Description>
+    <Description>In-memory token-bucket and sliding-window rate limiting with OrionClock, typed decisions, and OpenTelemetry. Add OrionRate.AspNetCore for Minimal API endpoint filters.</Description>
     <PackageTags>orion;rate-limiting;throttling;token-bucket;sliding-window;quota;dotnet</PackageTags>
     <RootNamespace>Moongazing.OrionRate</RootNamespace>
     <IsAotCompatible>true</IsAotCompatible>

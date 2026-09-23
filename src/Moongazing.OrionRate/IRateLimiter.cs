@@ -5,8 +5,8 @@ using System.Threading.Tasks;
 
 /// <summary>
 /// Checks and consumes rate-limit permits for a key against a named policy. This is the library path:
-/// resolve the key yourself (see <see cref="Key"/>) and call <see cref="AcquireAsync"/>. The Wave 3
-/// ASP.NET middleware layers request-driven key resolution and HTTP headers on top of this.
+/// resolve the key yourself (see <see cref="Key"/>) and call <see cref="AcquireAsync"/>. The optional
+/// <c>OrionRate.AspNetCore</c> package layers request-driven key resolution and HTTP responses on top.
 /// </summary>
 public interface IRateLimiter
 {

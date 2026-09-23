@@ -8,6 +8,14 @@ All notable changes to OrionRate are documented in this file. The format is base
 
 ## [Unreleased]
 
+### Added
+
+- **`OrionRate.AspNetCore`** — an optional Minimal API endpoint/route-group filter. Applications
+  select a trusted, normalized identity explicitly; the filter resolves the limiter per request,
+  forwards cancellation, emits limit/remaining headers, and returns problem-details `429` with a
+  whole-second `Retry-After` on rejection. Empty identities fail closed. The budget remains
+  per process; the core has no ASP.NET Core dependency.
+
 ### Fixed
 
 - **Policy builders reject a second algorithm selection** (**breaking**). Calling `TokenBucket`
