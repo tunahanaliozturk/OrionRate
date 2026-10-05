@@ -4,12 +4,16 @@
     <Description>In-memory token-bucket and sliding-window rate limiting with OrionClock, typed decisions, and OpenTelemetry. Add OrionRate.AspNetCore for Minimal API endpoint filters.</Description>
     <PackageTags>orion;rate-limiting;throttling;token-bucket;sliding-window;quota;dotnet</PackageTags>
     <RootNamespace>Moongazing.OrionRate</RootNamespace>
+    <PackageReadmeFile>docs/README.md</PackageReadmeFile>
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Orion.Abstractions" Version="1.2.0" />
     <PackageReference Include="OrionClock" Version="0.9.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="docs/README.md" Pack="true" PackagePath="docs/" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Moongazing.OrionRate.Tests" />
