@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1120" viewBox="0 0 1200 1120">
+  <!--
+    Orion family diagram template. Copy it, keep <defs> and <style>, replace the body.
+    Classes: .step (our code) .ext (backend / external system) .ok (success end) .fail (failure path)
+             .decision (diamond) .note (side remark) .lane (sequence lifeline)
+    Arrows: class="flow" (main path), "flow alt" (alternate / failure path, dashed), "flow back" (response).
+  -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-fail" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: "Segoe UI", Inter, "Helvetica Neue", Arial, sans-serif; fill: #1e1b4b; }
+    .title { font-size: 24px; font-weight: 700; }
+    .subtitle { font-size: 14px; fill: #475569; }
+    .label { font-size: 15px; font-weight: 600; }
+    .small { font-size: 12.5px; fill: #475569; }
+    .code { font-family: "Cascadia Code", Consolas, "SF Mono", monospace; font-size: 13px; fill: #3730a3; }
+    .edge { font-size: 12.5px; fill: #334155; }
+    .step { fill: #eef2ff; stroke: #4f46e5; stroke-width: 2; }
+    .ext { fill: #f0f9ff; stroke: #0284c7; stroke-width: 2; }
+    .ok { fill: #ecfdf5; stroke: #059669; stroke-width: 2; }
+    .fail { fill: #fef2f2; stroke: #dc2626; stroke-width: 2; }
+    .decision { fill: #fffbeb; stroke: #d97706; stroke-width: 2; }
+    .note { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.5; stroke-dasharray: 4 3; }
+    .lane { stroke: #cbd5e1; stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .flow { fill: none; stroke: #64748b; stroke-width: 2; marker-end: url(#arrow); }
+    .flow.alt { stroke: #dc2626; stroke-dasharray: 6 4; marker-end: url(#arrow-fail); }
+    .flow.back { stroke-dasharray: 6 4; }
+    .badge { fill: #4f46e5; }
+    .badge-text { font-size: 12px; font-weight: 700; fill: #ffffff; }
+  </style>
+
+  <rect width="1200" height="1120" fill="#ffffff"/>
+
+  <text class="title" x="40" y="52">OrionRate - AcquireAsync decision</text>
+  <text class="subtitle" x="40" y="78">Each call is validated, locked per (policy, key) and evaluated by the policy's algorithm. A throttle is returned as data, not thrown.</text>
+
+  <!-- call -->
+  <rect class="step" x="40" y="115" width="300" height="70" rx="14"/>
+  <text class="code" x="190" y="146" text-anchor="middle">AcquireAsync(policy, key,</text>
+  <text class="code" x="190" y="166" text-anchor="middle">permits = 1)</text>
+
+  <path class="flow" d="M340,150 L378,150"/>
+
+  <!-- D1: valid call -->
+  <polygon class="decision" points="520,90 660,150 520,210 380,150"/>
+  <text class="label" x="520" y="146" text-anchor="middle">Valid call?</text>
+  <text class="small" x="520" y="168" text-anchor="middle">arguments, policy name</text>
+
+  <path class="flow alt" d="M660,150 L718,150"/>
+  <text class="edge" x="689" y="140" text-anchor="middle">no</text>
+  <rect class="fail" x="720" y="100" width="440" height="100" rx="14"/>
+  <text class="label" x="940" y="127" text-anchor="middle">Throws</text>
+  <text class="small" x="940" y="150" text-anchor="middle">ArgumentException: policy or key null or empty</text>
+  <text class="small" x="940" y="170" text-anchor="middle">ArgumentOutOfRangeException: permits not positive</text>
+  <text class="small" x="940" y="190" text-anchor="middle">KeyNotFoundException: no policy with that name</text>
+
+  <!-- lock -->
+  <path class="flow" d="M520,210 L520,243"/>
+  <text class="edge" x="532" y="229">yes</text>
+  <rect class="step" x="340" y="245" width="360" height="90" rx="14"/>
+  <text class="label" x="520" y="273" text-anchor="middle">Lock the partition</text>
+  <text class="small" x="520" y="296" text-anchor="middle">entries.GetOrAdd(policy + key), lock its gate</text>
+  <text class="small" x="520" y="316" text-anchor="middle">swept while waiting? retry on the new entry</text>
+
+  <!-- D2: capacity -->
+  <path class="flow" d="M520,335 L520,373"/>
+  <polygon class="decision" points="520,375 650,430 520,485 390,430"/>
+  <text class="label" x="520" y="426" text-anchor="middle">permits &gt;</text>
+  <text class="label" x="520" y="446" text-anchor="middle">capacity?</text>
+
+  <path class="flow alt" d="M650,430 L718,430"/>
+  <text class="edge" x="684" y="420" text-anchor="middle">yes</text>
+  <rect class="fail" x="720" y="385" width="440" height="90" rx="14"/>
+  <text class="label" x="940" y="413" text-anchor="middle">Throws ArgumentOutOfRangeException</text>
+  <text class="small" x="940" y="437" text-anchor="middle">a request that could never be admitted; capacity is</text>
+  <text class="small" x="940" y="457" text-anchor="middle">permit + burst (token bucket) or permit (sliding window)</text>
+
+  <!-- split into the two algorithms -->
+  <path class="flow" style="marker-end: none" d="M520,485 L520,510 M300,510 L900,510"/>
+  <text class="edge" x="532" y="503">no</text>
+  <path class="flow" d="M300,510 L300,538"/>
+  <path class="flow" d="M900,510 L900,538"/>
+
+  <!-- token bucket -->
+  <rect class="step" x="60" y="540" width="480" height="90" rx="14"/>
+  <text class="code" x="300" y="568" text-anchor="middle">TokenBucketPolicy.Evaluate</text>
+  <text class="small" x="300" y="592" text-anchor="middle">a new key starts with a full bucket (permit + burst tokens)</text>
+  <text class="small" x="300" y="612" text-anchor="middle">available = min(capacity, tokens + elapsed x permit / per)</text>
+
+  <path class="flow" d="M300,630 L300,668"/>
+  <polygon class="decision" points="300,670 420,725 300,780 180,725"/>
+  <text class="label" x="300" y="721" text-anchor="middle">available</text>
+  <text class="label" x="300" y="741" text-anchor="middle">&gt;= permits?</text>
+
+  <path class="flow" d="M180,725 L180,838"/>
+  <text class="edge" x="170" y="790" text-anchor="end">yes</text>
+  <path class="flow alt" d="M420,725 L420,838"/>
+  <text class="edge" x="430" y="790">no</text>
+
+  <rect class="ok" x="65" y="840" width="230" height="100" rx="14"/>
+  <text class="label" x="180" y="868" text-anchor="middle">Allow</text>
+  <text class="small" x="180" y="891" text-anchor="middle">tokens -= permits</text>
+  <text class="small" x="180" y="911" text-anchor="middle">Remaining = whole tokens left</text>
+
+  <rect class="fail" x="305" y="840" width="230" height="100" rx="14"/>
+  <text class="label" x="420" y="868" text-anchor="middle">Throttle</text>
+  <text class="small" x="420" y="891" text-anchor="middle">RetryAfter = deficit / refill</text>
+  <text class="small" x="420" y="911" text-anchor="middle">rate, rounded up, never early</text>
+
+  <!-- sliding window -->
+  <rect class="step" x="660" y="540" width="480" height="90" rx="14"/>
+  <text class="code" x="900" y="568" text-anchor="middle">SlidingWindowPolicy.Evaluate</text>
+  <text class="small" x="900" y="592" text-anchor="middle">drop logged permits older than the window</text>
+  <text class="small" x="900" y="612" text-anchor="middle">used = permits still inside the trailing window</text>
+
+  <path class="flow" d="M900,630 L900,668"/>
+  <polygon class="decision" points="900,670 1020,725 900,780 780,725"/>
+  <text class="label" x="900" y="721" text-anchor="middle">used + permits</text>
+  <text class="label" x="900" y="741" text-anchor="middle">&lt;= permit?</text>
+
+  <path class="flow" d="M780,725 L780,838"/>
+  <text class="edge" x="770" y="790" text-anchor="end">yes</text>
+  <path class="flow alt" d="M1020,725 L1020,838"/>
+  <text class="edge" x="1030" y="790">no</text>
+
+  <rect class="ok" x="665" y="840" width="230" height="100" rx="14"/>
+  <text class="label" x="780" y="868" text-anchor="middle">Allow</text>
+  <text class="small" x="780" y="891" text-anchor="middle">log (now, permits)</text>
+  <text class="small" x="780" y="911" text-anchor="middle">Remaining = permit - used</text>
+
+  <rect class="fail" x="905" y="840" width="230" height="100" rx="14"/>
+  <text class="label" x="1020" y="868" text-anchor="middle">Throttle</text>
+  <text class="small" x="1020" y="891" text-anchor="middle">RetryAfter = window - age of</text>
+  <text class="small" x="1020" y="911" text-anchor="middle">the needed-th oldest permit</text>
+
+  <!-- merge -->
+  <path class="flow" style="marker-end: none" d="M180,940 L180,965 M420,940 L420,965 M780,940 L780,965 M1020,940 L1020,965 M180,965 L1020,965"/>
+  <path class="flow" d="M600,965 L600,998"/>
+
+  <rect class="step" x="300" y="1000" width="600" height="90" rx="14"/>
+  <text class="label" x="600" y="1028" text-anchor="middle">Record, sweep, return RateResult</text>
+  <text class="small" x="600" y="1052" text-anchor="middle">RateDiagnostics: orion.rate.allowed or orion.rate.throttled, orion.rate.remaining</text>
+  <text class="small" x="600" y="1072" text-anchor="middle">idle partitions swept at most once a minute, once 256 or more are held</text>
+</svg>

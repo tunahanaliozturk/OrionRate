@@ -1,15 +1,22 @@
 <p align="center">
-  <img src="docs/logo.png" alt="OrionRate" width="150" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo.png">
+    <img src="docs/icon.png" alt="OrionRate logo" width="150">
+  </picture>
 </p>
 
 # OrionRate
 
 [![CI/CD](https://github.com/tunahanaliozturk/OrionRate/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/tunahanaliozturk/OrionRate/actions/workflows/ci-cd.yml)
 [![NuGet](https://img.shields.io/nuget/v/OrionRate.svg)](https://www.nuget.org/packages/OrionRate/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+![.NET](https://img.shields.io/badge/.NET-8.0%20%7C%209.0%20%7C%2010.0-purple.svg)
 
 Rate limiting the **Orion** family way: token-bucket and sliding-window algorithms whose refill and window math run on an `OrionClock` `TimeProvider`, so a fake clock fast-forwards every limit in tests. `AcquireAsync` returns a typed `RateResult` — allowed, remaining, retry-after — with OpenTelemetry by default. The optional ASP.NET Core package adds endpoint and route-group filters.
 
-`System.Threading.RateLimiting` (the BCL primitive) is excellent and OrionRate builds on the same bucket math for the in-process case. But an in-memory limiter applies *per process*: three replicas behind a load balancer turn a "100/min" limit into 300. OrionRate adds typed decisions, clock-driven testing, and explicit identity-key selection for Minimal APIs. It does **not** yet provide a shared quota across replicas.
+`System.Threading.RateLimiting` (the BCL primitive) is excellent, and OrionRate uses the same token-bucket and sliding-window ideas in its own implementation (it does not depend on that package). But an in-memory limiter applies *per process*: three replicas behind a load balancer turn a "100/min" limit into 300. OrionRate adds typed decisions, clock-driven testing, and explicit identity-key selection for Minimal APIs. It does **not** yet provide a shared quota across replicas.
+
+![OrionRate overview: AddOrionRate registers the policies and a singleton RateLimiter; your code or the OrionRate.AspNetCore endpoint filter calls AcquireAsync, and the limiter reads IOrionClock and records to RateDiagnostics](docs/diagrams/overview.png)
 
 ## Features
 
@@ -34,9 +41,15 @@ For Minimal API endpoints or route groups, also install `OrionRate.AspNetCore`:
 dotnet add package OrionRate.AspNetCore
 ```
 
+| Package | What it is |
+|---------|------------|
+| `OrionRate` | `IRateLimiter`, `RateLimiter`, `RateLimiterOptions`, `TokenBucketPolicy`, `SlidingWindowPolicy`, `RateResult`, `Key`, `RateDiagnostics` and `AddOrionRate`. Depends on `Orion.Abstractions` and `OrionClock`. |
+| `OrionRate.AspNetCore` | `RequireOrionRateLimit`, the Minimal API endpoint and route-group filter that answers `429` with `Retry-After`. Depends on `OrionRate` and the ASP.NET Core shared framework. |
+
 ## Quick start (DI)
 
 ```csharp
+using Microsoft.Extensions.DependencyInjection;
 using Moongazing.OrionRate;
 using Moongazing.OrionRate.DependencyInjection;
 
@@ -57,9 +70,14 @@ if (!r.Allowed)
 }
 ```
 
+![AcquireAsync decision: the call is validated and its (policy, key) partition locked; a token bucket admits when enough tokens have refilled, a sliding window when the trailing window has room; a throttle carries RetryAfter, and an impossible request throws](docs/diagrams/acquire-decision.png)
+
 ## Quick start (no DI)
 
 ```csharp
+using Moongazing.OrionClock;
+using Moongazing.OrionRate;
+
 var options = new RateLimiterOptions()
     .AddPolicy("api", p => p.TokenBucket(100, TimeSpan.FromMinutes(1)));
 
@@ -93,11 +111,16 @@ closed instead of merging callers into a shared empty-key budget. Choose keys fr
 normalized identities; **do not trust a client-supplied identity header**. The package uses the
 in-memory limiter: every replica has its own independent budget.
 
+![RequireOrionRateLimit: the key selector picks an identity, a blank key throws, the limiter decides, RateLimit headers are set on both outcomes, an allowed request runs the endpoint and a throttled one gets 429 with Retry-After](docs/diagrams/endpoint-filter.png)
+
 ## Testing — limits fast-forward, no real waits
 
-Because refill and window math run on `OrionClock`, a `FakeOrionClock` advances a whole limit window instantly and deterministically:
+Because refill and window math run on `OrionClock`, a `FakeOrionClock` (from the `OrionClock.Testing` package) advances a whole limit window instantly and deterministically:
 
 ```csharp
+using Moongazing.OrionClock.Testing;
+using Moongazing.OrionRate;
+
 var clock = new FakeOrionClock();
 var limiter = RateLimiter.Create(
     new RateLimiterOptions().AddPolicy("api", p => p.TokenBucket(100, TimeSpan.FromMinutes(1))),
@@ -145,6 +168,7 @@ OrionRate is app-level fairness/quota, not an API gateway or WAF; it *reads* quo
 ## Documentation
 
 - [CHANGELOG.md](CHANGELOG.md) — release notes.
+- [SECURITY.md](SECURITY.md) — how to report a vulnerability privately.
 
 ## Contributing
 
